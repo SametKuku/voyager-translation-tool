@@ -35,11 +35,12 @@ export const translateWithGemini = async (
     const prompt = `Translate the following text to ${targetLanguage}.
 
 Rules:
-- Return ONLY the translated text, nothing else.
+- Return ONLY the translated text, nothing else. No explanations, no quotes.
 - Preserve all HTML tags exactly as they are (e.g. <b>, <br>, <span class="...">).
+- Preserve all placeholder tokens like XTAG0X, XTAG1X, XTAG2X etc. — keep them exactly as-is, do not translate or modify them.
 - Preserve all placeholders like :attribute, :value, %s, %d, {{ variable }}.
 - Preserve all URLs as-is.
-- Do not add any explanation or quotes around the result.
+- Do not add markdown formatting.
 
 Text to translate:
 ${text}`;

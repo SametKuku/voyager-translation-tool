@@ -5,25 +5,24 @@ const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
 const protectHtml = (text: string): { maskedText: string; tags: string[] } => {
     const tags: string[] = [];
-    // Matches HTML tags (e.g. <div class="foo">, </span>, <img />)
-    // Matches URLs (http/https) to prevent them from being translated
-    // Also protects specific Laravel Voyager/Blade syntax if likely to occur
-    const tagRegex = /<[^>]+>|https?:\/\/[^\s<"']+|%[s|d]|\{\{[^}]+\}\}/g;
+    const tagRegex = /<[^>]+>|https?:\/\/[^\s<"']+|%[sd]|\{\{[^}]+\}\}/g;
 
     const maskedText = text.replace(tagRegex, (match) => {
         tags.push(match);
-        // Using a very simple, non-translatable token format
-        // Emoji helps because translation engines usually ignore them or keep them intact
-        return `👉${tags.length - 1}👈`;
+        // Token format: XTAGNNX — Latin-only, no spaces, safe for RTL languages (Arabic, Hebrew etc.)
+        // Won't be translated or reordered by any translation engine
+        return `XTAG${tags.length - 1}X`;
     });
 
     return { maskedText, tags };
 };
 
 const restoreHtml = (maskedText: string, tags: string[]): string => {
-    // Matches the simple emoji token format
-    return maskedText.replace(/👉\s*(\d+)\s*👈/g, (match, index) => {
-        const i = parseInt(index, 10);
+    // Handles possible spaces or Arabic numerals injected around the token by translation engines
+    return maskedText.replace(/XTAG\s*([0-9٠-٩]+)\s*X/g, (match, index) => {
+        // Normalize Arabic-Indic digits to Western digits just in case
+        const normalized = index.replace(/[٠-٩]/g, (d: string) => String(d.charCodeAt(0) - 0x0660));
+        const i = parseInt(normalized, 10);
         return tags[i] !== undefined ? tags[i] : match;
     });
 };
