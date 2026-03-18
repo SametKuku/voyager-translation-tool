@@ -70,3 +70,23 @@ export const translateBatchWithGemini = async (
 ): Promise<string[]> => {
     return Promise.all(texts.map(text => translateWithGemini(text, targetLocale)));
 };
+
+export const testGeminiKey = async (key: string): Promise<{ ok: boolean; error?: string }> => {
+    try {
+        const response = await fetch(`${GEMINI_API_URL}?key=${key.trim()}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                contents: [{ parts: [{ text: 'Say "ok"' }] }],
+                generationConfig: { maxOutputTokens: 5 },
+            }),
+        });
+        if (!response.ok) {
+            const err = await response.json().catch(() => ({}));
+            return { ok: false, error: err?.error?.message ?? `HTTP ${response.status}` };
+        }
+        return { ok: true };
+    } catch (e: any) {
+        return { ok: false, error: e.message };
+    }
+};

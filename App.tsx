@@ -12,7 +12,7 @@ import {
   generateSQL
 } from './services/sqlUtils';
 import { translateBatch } from './services/lingvaService';
-import { isGeminiAvailable, saveGeminiKey } from './services/geminiService';
+import { isGeminiAvailable, saveGeminiKey, testGeminiKey } from './services/geminiService';
 import { translateComplexHtml } from './services/htmlTranslator';
 import { slugify } from './services/textUtils';
 // Icons using SVG for simplicity
@@ -30,6 +30,9 @@ export default function App() {
   const [geminiActive, setGeminiActive] = useState<boolean>(isGeminiAvailable());
   const [apiKeyInput, setApiKeyInput] = useState<string>('');
   const [apiKeySaved, setApiKeySaved] = useState<boolean>(false);
+  const [apiKeyTesting, setApiKeyTesting] = useState<boolean>(false);
+  const [apiKeyStatus, setApiKeyStatus] = useState<'idle' | 'ok' | 'error'>('idle');
+  const [apiKeyError, setApiKeyError] = useState<string>('');
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const addLog = useCallback((message: string, type: ProcessingLog['type'] = 'info') => {
@@ -266,21 +269,50 @@ export default function App() {
                 <input
                   type="password"
                   value={apiKeyInput}
-                  onChange={e => { setApiKeyInput(e.target.value); setApiKeySaved(false); }}
+                  onChange={e => { setApiKeyInput(e.target.value); setApiKeySaved(false); setApiKeyStatus('idle'); }}
                   placeholder={geminiActive ? '••••••••••••••••' : 'AIzaSy...'}
-                  className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-300 bg-slate-50"
+                  className={`w-full px-3 py-2 text-sm border rounded-lg focus:outline-none focus:ring-2 bg-slate-50 transition-colors ${
+                    apiKeyStatus === 'ok' ? 'border-emerald-400 focus:ring-emerald-200' :
+                    apiKeyStatus === 'error' ? 'border-rose-400 focus:ring-rose-200' :
+                    'border-slate-200 focus:ring-indigo-300'
+                  }`}
                 />
+
+                {apiKeyStatus === 'ok' && (
+                  <p className="text-xs text-emerald-600 font-medium flex items-center gap-1">
+                    <span>✓</span> API key geçerli, Gemini aktif.
+                  </p>
+                )}
+                {apiKeyStatus === 'error' && (
+                  <p className="text-xs text-rose-600 flex items-center gap-1">
+                    <span>✗</span> {apiKeyError}
+                  </p>
+                )}
+
                 <div className="flex gap-2">
                   <button
-                    onClick={() => {
-                      saveGeminiKey(apiKeyInput);
-                      setGeminiActive(apiKeyInput.trim() !== '');
-                      setApiKeySaved(true);
-                      setApiKeyInput('');
+                    disabled={!apiKeyInput.trim() || apiKeyTesting}
+                    onClick={async () => {
+                      setApiKeyTesting(true);
+                      setApiKeyStatus('idle');
+                      const result = await testGeminiKey(apiKeyInput);
+                      setApiKeyTesting(false);
+                      if (result.ok) {
+                        saveGeminiKey(apiKeyInput);
+                        setGeminiActive(true);
+                        setApiKeySaved(true);
+                        setApiKeyStatus('ok');
+                        setApiKeyInput('');
+                      } else {
+                        setApiKeyStatus('error');
+                        setApiKeyError(result.error ?? 'Geçersiz key.');
+                      }
                     }}
-                    className="flex-1 py-2 px-3 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium rounded-lg transition-all"
+                    className="flex-1 py-2 px-3 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white text-sm font-medium rounded-lg transition-all flex items-center justify-center gap-1"
                   >
-                    {apiKeySaved ? '✓ Kaydedildi' : 'Kaydet'}
+                    {apiKeyTesting ? (
+                      <><IconLoading /> Test ediliyor...</>
+                    ) : apiKeySaved ? '✓ Kaydedildi' : 'Test Et & Kaydet'}
                   </button>
                   {geminiActive && (
                     <button
@@ -288,6 +320,7 @@ export default function App() {
                         saveGeminiKey('');
                         setGeminiActive(false);
                         setApiKeySaved(false);
+                        setApiKeyStatus('idle');
                         setApiKeyInput('');
                       }}
                       className="py-2 px-3 bg-rose-50 hover:bg-rose-100 text-rose-600 text-sm font-medium rounded-lg border border-rose-200 transition-all"
@@ -296,6 +329,7 @@ export default function App() {
                     </button>
                   )}
                 </div>
+
                 <p className="text-[10px] text-slate-400">
                   {geminiActive ? 'Gemini aktif — GTX kullanılmıyor.' : 'Key girilmezse Google Translate (GTX) kullanılır.'}
                 </p>
