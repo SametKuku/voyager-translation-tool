@@ -1,0 +1,5 @@
+{
+  "name": "Voyager Translator Pro",
+  "description": "An automated multi-language translation generator for Laravel Voyager 'translations' table using Gemini AI. Supports SQL parsing, preservation of HTML/placeholders, and batch generation for Spanish and Russian.",
+  "requestFramePermissions": []
+}
