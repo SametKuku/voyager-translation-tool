@@ -4,35 +4,48 @@ import {
   VoyagerTranslation,
   ProcessStatus,
   ProcessingLog,
-  TranslationGroup
+  TranslationGroup,
+  SUPPORTED_LANGUAGES,
+  LanguageInfo,
 } from './types';
 import {
   parseVoyagerSQL,
   groupTranslations,
-  generateSQL
+  generateSQL,
+  detectLanguages,
 } from './services/sqlUtils';
 import { translateBatch } from './services/lingvaService';
 import { isGeminiAvailable, saveGeminiKey, testGeminiKey } from './services/geminiService';
 import { translateComplexHtml } from './services/htmlTranslator';
 import { slugify } from './services/textUtils';
-// Icons using SVG for simplicity
+
 const IconUpload = () => <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" /></svg>;
 const IconCheck = () => <svg className="w-5 h-5 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>;
 const IconLoading = () => <svg className="animate-spin h-5 w-5 text-indigo-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>;
 
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
+const getLangInfo = (code: string): LanguageInfo =>
+  SUPPORTED_LANGUAGES.find(l => l.code === code) ?? { code, name: code.toUpperCase(), flag: '🌐' };
+
 export default function App() {
   const [status, setStatus] = useState<ProcessStatus>(ProcessStatus.IDLE);
   const [logs, setLogs] = useState<ProcessingLog[]>([]);
   const [groups, setGroups] = useState<TranslationGroup[]>([]);
   const [activeTab, setActiveTab] = useState<'preview' | 'logs' | 'export'>('preview');
+
+  const [sourceLang, setSourceLang] = useState<string>('en');
+  const [detectedLangs, setDetectedLangs] = useState<string[]>([]);
+  const [targetLangs, setTargetLangs] = useState<string[]>([]);
+
   const [geminiActive, setGeminiActive] = useState<boolean>(isGeminiAvailable());
   const [apiKeyInput, setApiKeyInput] = useState<string>('');
   const [apiKeySaved, setApiKeySaved] = useState<boolean>(false);
   const [apiKeyTesting, setApiKeyTesting] = useState<boolean>(false);
   const [apiKeyStatus, setApiKeyStatus] = useState<'idle' | 'ok' | 'error'>('idle');
   const [apiKeyError, setApiKeyError] = useState<string>('');
+
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   React.useEffect(() => {
     const saved = localStorage.getItem('GEMINI_API_KEY');
@@ -51,7 +64,6 @@ export default function App() {
       });
     }
   }, []);
-  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const addLog = useCallback((message: string, type: ProcessingLog['type'] = 'info') => {
     setLogs(prev => [{ timestamp: new Date(), message, type }, ...prev]);
@@ -71,8 +83,21 @@ export default function App() {
         const parsed = parseVoyagerSQL(content);
         addLog(`Successfully parsed ${parsed.length} rows from SQL.`);
 
-        const grouped = groupTranslations(parsed);
-        addLog(`Identified ${grouped.length} translation groups (EN sources).`);
+        const { sourceLang: src, allLangs } = detectLanguages(parsed);
+        const others = allLangs.filter(l => l !== src);
+
+        setSourceLang(src);
+        setDetectedLangs(allLangs);
+        setTargetLangs(others);
+
+        const srcInfo = getLangInfo(src);
+        addLog(`Source language detected: ${srcInfo.flag} ${srcInfo.name} (${src.toUpperCase()})`, 'success');
+        if (others.length > 0) {
+          addLog(`Existing translations found: ${others.map(l => getLangInfo(l).flag + ' ' + l.toUpperCase()).join(', ')}`, 'info');
+        }
+
+        const grouped = groupTranslations(parsed, src);
+        addLog(`Identified ${grouped.length} translation groups.`);
 
         setGroups(grouped);
         setStatus(ProcessStatus.IDLE);
@@ -84,116 +109,105 @@ export default function App() {
     reader.readAsText(file);
   };
 
+  const toggleTargetLang = (code: string) => {
+    setTargetLangs(prev =>
+      prev.includes(code) ? prev.filter(l => l !== code) : [...prev, code]
+    );
+  };
+
   const startTranslation = async () => {
-    if (groups.length === 0) return;
+    if (groups.length === 0 || targetLangs.length === 0) return;
     setStatus(ProcessStatus.TRANSLATING);
-    addLog(`Starting batch translation with ${isGeminiAvailable() ? 'Gemini AI' : 'Google Translate (GTX)'}...`);
-    addLog("NOTE: This will overwrite ALL existing Spanish/Russian translations with new versions from English.");
+    addLog(`Starting translation with ${geminiActive ? 'Gemini AI' : 'Google Translate (GTX)'}...`);
+    addLog(`Target languages: ${targetLangs.map(l => getLangInfo(l).flag + ' ' + l.toUpperCase()).join(', ')}`);
 
     const updatedGroups = [...groups];
-    const batchSize = 500;
+    const batchSize = 50;
 
     try {
-      let i = 0;
-      while (i < updatedGroups.length) {
-        const batch = updatedGroups.slice(i, i + batchSize);
-        const enTexts = batch.map(g => g.en.value);
-        const currentBatchNum = Math.floor(i / batchSize) + 1;
-        const totalBatches = Math.ceil(updatedGroups.length / batchSize);
+      for (const locale of targetLangs) {
+        const langInfo = getLangInfo(locale);
+        addLog(`Translating to ${langInfo.flag} ${langInfo.name}...`);
 
-        addLog(`Processing batch ${currentBatchNum}/${totalBatches} (${batch.length} items)...`);
+        let i = 0;
+        while (i < updatedGroups.length) {
+          const batch = updatedGroups.slice(i, i + batchSize);
+          const currentBatchNum = Math.floor(i / batchSize) + 1;
+          const totalBatches = Math.ceil(updatedGroups.length / batchSize);
 
-        // Check if this batch is for complex HTML columns
-        // Users reported issues with 'features' and 'teknik_tablo_html', so we treat them specially
-        const isComplexHtmlBatch = batch.some(g =>
-          g.en.column_name === 'teknik_tablo_html' ||
-          g.en.column_name === 'features'
-        );
+          addLog(`[${langInfo.flag} ${locale.toUpperCase()}] Batch ${currentBatchNum}/${totalBatches} (${batch.length} items)...`);
 
-        try {
-          let esTranslations: string[] = [];
-          let ruTranslations: string[] = [];
+          const isComplexHtmlBatch = batch.some(g =>
+            g.source.column_name === 'teknik_tablo_html' ||
+            g.source.column_name === 'features'
+          );
 
-          if (isComplexHtmlBatch) {
-            // For complex HTML, we process item by item using the DOM-aware translator
-            // This is slower but guarantees structure isn't broken
-            addLog(`Batch ${currentBatchNum}: Detected HTML content. Using safe mode...`);
+          try {
+            let translations: string[];
 
-            for (const text of enTexts) {
-              // Fix for the newline/backslash hell described by user
-              // Clean up excessive backslashes before processing (e.g. \\\\n -> \n)
-              const cleanText = text.replace(/\\\\+n/g, '\n').replace(/\\n/g, '\n');
-
-              esTranslations.push(await translateComplexHtml(cleanText, 'es'));
-              ruTranslations.push(await translateComplexHtml(cleanText, 'ru'));
-            }
-          } else {
-            // Standard fast batch translation for simple text
-            esTranslations = await translateBatch(enTexts, 'es');
-            ruTranslations = await translateBatch(enTexts, 'ru');
-          }
-
-          batch.forEach((group, index) => {
-            let esVal = esTranslations[index];
-            let ruVal = ruTranslations[index];
-
-            // Fix for Slugs: If the column is 'slug', we must ensure it's URL friendly.
-            if (group.en.column_name === 'slug') {
-              esVal = slugify(esVal);
-              ruVal = slugify(ruVal);
+            if (isComplexHtmlBatch) {
+              addLog(`Batch ${currentBatchNum}: HTML content detected, using safe mode...`);
+              translations = [];
+              for (const g of batch) {
+                const cleanText = g.source.value.replace(/\\\\+n/g, '\n').replace(/\\n/g, '\n');
+                translations.push(await translateComplexHtml(cleanText, locale));
+              }
+            } else {
+              translations = await translateBatch(batch.map(g => g.source.value), locale);
             }
 
-            group.es = { ...group.en, locale: 'es', value: esVal };
-            group.ru = { ...group.en, locale: 'ru', value: ruVal };
-          });
+            batch.forEach((group, idx) => {
+              let val = translations[idx];
+              if (group.source.column_name === 'slug') val = slugify(val);
+              group.translations[locale] = { ...group.source, locale, value: val };
+            });
 
-          setGroups([...updatedGroups]);
+            setGroups([...updatedGroups]);
+            i += batchSize;
+            await sleep(50);
 
-          // Only increment if successful
-          i += batchSize;
-
-          // Success delay - reduced for speed
-          await sleep(50);
-
-        } catch (batchError: any) {
-          const isRateLimit = batchError?.message?.includes('429') || batchError?.message?.includes('Rate Limit');
-          addLog(`Error in batch ${currentBatchNum}: ${batchError.message}`, "error");
-
-          if (isRateLimit) {
-            addLog("Rate limit hit. Waiting 20 seconds before retrying this batch...", "warning");
-            await sleep(20000);
-            // Loop continues without incrementing 'i', so it retries the same batch
-          } else {
-            // If it's another error (not rate limit), maybe we should skip to avoid infinite loop?
-            // For now, let's treat all errors as retry-able but with shorter wait, 
-            // OR force skip if it persists. But user wants 200, so let's just retry.
-            addLog("Retrying in 5 seconds...", "info");
-            await sleep(5000);
+          } catch (batchError: any) {
+            const isRateLimit = batchError?.message?.includes('429');
+            addLog(`Error in batch ${currentBatchNum}: ${batchError.message}`, 'error');
+            if (isRateLimit) {
+              addLog('Rate limit hit. Waiting 20 seconds...', 'warning');
+              await sleep(20000);
+            } else {
+              addLog('Retrying in 5 seconds...', 'info');
+              await sleep(5000);
+            }
           }
         }
+
+        addLog(`${langInfo.flag} ${langInfo.name} translation complete!`, 'success');
       }
 
-      addLog("Translation process finished!", "success");
+      addLog('All translations finished!', 'success');
       setStatus(ProcessStatus.COMPLETED);
       setActiveTab('export');
     } catch (error) {
-      const errMsg = error instanceof Error ? error.message : 'Unknown error';
-      addLog(`Unexpected failure: ${errMsg}`, 'error');
+      addLog(`Unexpected failure: ${error instanceof Error ? error.message : 'Unknown error'}`, 'error');
       setStatus(ProcessStatus.ERROR);
     }
   };
 
   const downloadSQL = () => {
-    const sql = generateSQL(groups);
+    const sql = generateSQL(groups, targetLangs);
     const blob = new Blob([sql], { type: 'text/sql' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `voyager_translations_update_${new Date().toISOString().split('T')[0]}.sql`;
+    a.download = `voyager_translations_${new Date().toISOString().split('T')[0]}.sql`;
     a.click();
     URL.revokeObjectURL(url);
-    addLog("SQL File downloaded.", "success");
+    addLog('SQL File downloaded.', 'success');
   };
+
+  const availableToAdd = SUPPORTED_LANGUAGES.filter(
+    l => l.code !== sourceLang && !targetLangs.includes(l.code)
+  );
+
+  const completedCount = groups.filter(g => targetLangs.every(l => g.translations[l])).length;
 
   return (
     <div className="max-w-7xl mx-auto px-4 py-8">
@@ -202,8 +216,7 @@ export default function App() {
           Voyager <span className="text-indigo-600">Translator Pro</span>
         </h1>
         <p className="text-slate-500 max-w-2xl mx-auto">
-          Automate your Laravel Voyager multi-language content. Convert English sources to Spanish and Russian
-          while maintaining HTML safety and technical placeholders.
+          Automate your Laravel Voyager multi-language content. Upload a SQL dump, select target languages, and export.
         </p>
         <div className="mt-3 inline-flex items-center gap-2">
           {geminiActive ? (
@@ -222,151 +235,187 @@ export default function App() {
       </header>
 
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-8">
-        {/* Sidebar / Controls */}
-        <div className="lg:col-span-1 space-y-6">
-          <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
-            <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
-              <span className="p-2 bg-indigo-50 text-indigo-600 rounded-lg"><IconUpload /></span>
-              Control Center
-            </h2>
+        {/* Sidebar */}
+        <div className="lg:col-span-1 space-y-4">
 
-            <div className="space-y-4">
+          {/* Control Center */}
+          <div className="bg-white p-5 rounded-2xl shadow-sm border border-slate-200">
+            <h2 className="text-sm font-bold text-slate-400 uppercase tracking-wider mb-4">Control Center</h2>
+
+            <div className="space-y-3">
               <button
                 onClick={() => fileInputRef.current?.click()}
                 disabled={status === ProcessStatus.TRANSLATING}
-                className="w-full py-3 px-4 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white font-medium rounded-xl transition-all shadow-md flex items-center justify-center gap-2"
+                className="w-full py-2.5 px-4 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white font-medium rounded-xl transition-all shadow-sm flex items-center justify-center gap-2 text-sm"
               >
-                Upload SQL Dump
+                <IconUpload /> Upload SQL Dump
               </button>
-              <input
-                type="file"
-                ref={fileInputRef}
-                onChange={handleFileUpload}
-                className="hidden"
-                accept=".sql"
-              />
+              <input type="file" ref={fileInputRef} onChange={handleFileUpload} className="hidden" accept=".sql" />
 
               <button
                 onClick={startTranslation}
-                disabled={groups.length === 0 || status === ProcessStatus.TRANSLATING || status === ProcessStatus.COMPLETED}
-                className="w-full py-3 px-4 bg-white hover:bg-slate-50 border-2 border-indigo-600 text-indigo-600 disabled:opacity-50 font-semibold rounded-xl transition-all flex items-center justify-center gap-2"
+                disabled={groups.length === 0 || targetLangs.length === 0 || status === ProcessStatus.TRANSLATING || status === ProcessStatus.COMPLETED}
+                className="w-full py-2.5 px-4 bg-white hover:bg-slate-50 border-2 border-indigo-600 text-indigo-600 disabled:opacity-50 font-semibold rounded-xl transition-all flex items-center justify-center gap-2 text-sm"
               >
-                {status === ProcessStatus.TRANSLATING ? <IconLoading /> : null}
-                {status === ProcessStatus.TRANSLATING ? 'Translating...' : 'Start AI Translation'}
+                {status === ProcessStatus.TRANSLATING ? <><IconLoading /> Translating...</> : 'Start Translation'}
               </button>
 
               {status === ProcessStatus.COMPLETED && (
                 <button
                   onClick={downloadSQL}
-                  className="w-full py-3 px-4 bg-emerald-600 hover:bg-emerald-700 text-white font-medium rounded-xl transition-all shadow-md"
+                  className="w-full py-2.5 px-4 bg-emerald-600 hover:bg-emerald-700 text-white font-medium rounded-xl transition-all shadow-sm text-sm"
                 >
-                  Download Updated SQL
+                  Download SQL
                 </button>
               )}
             </div>
 
-            <div className="mt-8 pt-6 border-t border-slate-100">
-              <h3 className="text-sm font-bold text-slate-400 uppercase tracking-wider mb-4">Stats</h3>
-              <div className="grid grid-cols-2 gap-4">
-                <div className="bg-slate-50 p-3 rounded-lg text-center">
-                  <div className="text-2xl font-bold text-indigo-600">{groups.length}</div>
-                  <div className="text-xs text-slate-500">Source Items</div>
-                </div>
-                <div className="bg-slate-50 p-3 rounded-lg text-center">
-                  <div className="text-2xl font-bold text-emerald-600">
-                    {groups.filter(g => g.es && g.ru).length}
-                  </div>
-                  <div className="text-xs text-slate-500">Completed</div>
-                </div>
+            {/* Stats */}
+            <div className="mt-5 pt-4 border-t border-slate-100 grid grid-cols-2 gap-3">
+              <div className="bg-slate-50 p-2.5 rounded-lg text-center">
+                <div className="text-xl font-bold text-indigo-600">{groups.length}</div>
+                <div className="text-[10px] text-slate-500">Source Items</div>
+              </div>
+              <div className="bg-slate-50 p-2.5 rounded-lg text-center">
+                <div className="text-xl font-bold text-emerald-600">{completedCount}</div>
+                <div className="text-[10px] text-slate-500">Completed</div>
               </div>
             </div>
+          </div>
 
-            <div className="mt-6 pt-6 border-t border-slate-100">
-              <h3 className="text-sm font-bold text-slate-400 uppercase tracking-wider mb-3">Gemini API Key</h3>
-              <div className="space-y-2">
-                <input
-                  type="password"
-                  value={apiKeyInput}
-                  onChange={e => { setApiKeyInput(e.target.value); setApiKeySaved(false); setApiKeyStatus('idle'); }}
-                  placeholder={geminiActive ? '••••••••••••••••' : 'AIzaSy...'}
-                  className={`w-full px-3 py-2 text-sm border rounded-lg focus:outline-none focus:ring-2 bg-slate-50 transition-colors ${
-                    apiKeyStatus === 'ok' ? 'border-emerald-400 focus:ring-emerald-200' :
-                    apiKeyStatus === 'error' ? 'border-rose-400 focus:ring-rose-200' :
-                    'border-slate-200 focus:ring-indigo-300'
-                  }`}
-                />
+          {/* Language Manager */}
+          <div className="bg-white p-5 rounded-2xl shadow-sm border border-slate-200">
+            <h2 className="text-sm font-bold text-slate-400 uppercase tracking-wider mb-4">Languages</h2>
 
-                {apiKeyStatus === 'ok' && (
-                  <p className="text-xs text-emerald-600 font-medium flex items-center gap-1">
-                    <span>✓</span> API key geçerli, Gemini aktif.
-                  </p>
-                )}
-                {apiKeyStatus === 'error' && (
-                  <p className="text-xs text-rose-600 flex items-center gap-1">
-                    <span>✗</span> {apiKeyError}
-                  </p>
-                )}
-
-                <div className="flex gap-2">
-                  <button
-                    disabled={!apiKeyInput.trim() || apiKeyTesting}
-                    onClick={async () => {
-                      setApiKeyTesting(true);
-                      setApiKeyStatus('idle');
-                      const result = await testGeminiKey(apiKeyInput);
-                      setApiKeyTesting(false);
-                      if (result.ok) {
-                        saveGeminiKey(apiKeyInput);
-                        setGeminiActive(true);
-                        setApiKeySaved(true);
-                        setApiKeyStatus('ok');
-                        setApiKeyInput('');
-                      } else {
-                        setApiKeyStatus('error');
-                        setApiKeyError(result.error ?? 'Geçersiz key.');
-                      }
-                    }}
-                    className="flex-1 py-2 px-3 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white text-sm font-medium rounded-lg transition-all flex items-center justify-center gap-1"
-                  >
-                    {apiKeyTesting ? (
-                      <><IconLoading /> Test ediliyor...</>
-                    ) : apiKeySaved ? '✓ Kaydedildi' : 'Test Et & Kaydet'}
-                  </button>
-                  {geminiActive && (
-                    <button
-                      onClick={() => {
-                        saveGeminiKey('');
-                        setGeminiActive(false);
-                        setApiKeySaved(false);
-                        setApiKeyStatus('idle');
-                        setApiKeyInput('');
-                      }}
-                      className="py-2 px-3 bg-rose-50 hover:bg-rose-100 text-rose-600 text-sm font-medium rounded-lg border border-rose-200 transition-all"
-                    >
-                      Sil
-                    </button>
-                  )}
-                </div>
-
-                <p className="text-[10px] text-slate-400">
-                  {geminiActive ? 'Gemini aktif — GTX kullanılmıyor.' : 'Key girilmezse Google Translate (GTX) kullanılır.'}
-                </p>
+            {/* Source Language */}
+            {detectedLangs.length > 0 && (
+              <div className="mb-3">
+                <p className="text-[10px] text-slate-400 font-semibold uppercase mb-1.5">Source</p>
+                <span className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-indigo-50 text-indigo-700 border border-indigo-200 rounded-lg text-xs font-semibold">
+                  {getLangInfo(sourceLang).flag} {getLangInfo(sourceLang).name}
+                </span>
               </div>
+            )}
+
+            {/* Target Languages */}
+            <div className="mb-3">
+              <p className="text-[10px] text-slate-400 font-semibold uppercase mb-1.5">Translate To</p>
+              {targetLangs.length === 0 ? (
+                <p className="text-xs text-slate-400 italic">No target languages selected.</p>
+              ) : (
+                <div className="flex flex-wrap gap-1.5">
+                  {targetLangs.map(code => {
+                    const info = getLangInfo(code);
+                    return (
+                      <span
+                        key={code}
+                        className="inline-flex items-center gap-1 px-2 py-0.5 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded-lg text-xs font-medium"
+                      >
+                        {info.flag} {code.toUpperCase()}
+                        <button
+                          onClick={() => toggleTargetLang(code)}
+                          className="ml-0.5 hover:text-rose-500 transition-colors font-bold"
+                        >×</button>
+                      </span>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            {/* Add Language */}
+            {availableToAdd.length > 0 && (
+              <div>
+                <p className="text-[10px] text-slate-400 font-semibold uppercase mb-1.5">Add Language</p>
+                <div className="flex flex-wrap gap-1.5">
+                  {availableToAdd.map(lang => (
+                    <button
+                      key={lang.code}
+                      onClick={() => toggleTargetLang(lang.code)}
+                      className="inline-flex items-center gap-1 px-2 py-0.5 bg-slate-50 hover:bg-indigo-50 text-slate-600 hover:text-indigo-700 border border-slate-200 hover:border-indigo-300 rounded-lg text-xs transition-all"
+                    >
+                      {lang.flag} {lang.code.toUpperCase()}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Gemini API Key */}
+          <div className="bg-white p-5 rounded-2xl shadow-sm border border-slate-200">
+            <h2 className="text-sm font-bold text-slate-400 uppercase tracking-wider mb-3">Gemini API Key</h2>
+            <div className="space-y-2">
+              <input
+                type="password"
+                value={apiKeyInput}
+                onChange={e => { setApiKeyInput(e.target.value); setApiKeySaved(false); setApiKeyStatus('idle'); }}
+                placeholder={geminiActive ? '••••••••••••••••' : 'AIzaSy...'}
+                className={`w-full px-3 py-2 text-sm border rounded-lg focus:outline-none focus:ring-2 bg-slate-50 transition-colors ${
+                  apiKeyStatus === 'ok' ? 'border-emerald-400 focus:ring-emerald-200' :
+                  apiKeyStatus === 'error' ? 'border-rose-400 focus:ring-rose-200' :
+                  'border-slate-200 focus:ring-indigo-300'
+                }`}
+              />
+              {apiKeyStatus === 'ok' && (
+                <p className="text-xs text-emerald-600 font-medium flex items-center gap-1">✓ API key geçerli, Gemini aktif.</p>
+              )}
+              {apiKeyStatus === 'error' && (
+                <p className="text-xs text-rose-600">✗ {apiKeyError}</p>
+              )}
+              <div className="flex gap-2">
+                <button
+                  disabled={!apiKeyInput.trim() || apiKeyTesting}
+                  onClick={async () => {
+                    setApiKeyTesting(true);
+                    setApiKeyStatus('idle');
+                    const result = await testGeminiKey(apiKeyInput);
+                    setApiKeyTesting(false);
+                    if (result.ok) {
+                      saveGeminiKey(apiKeyInput);
+                      setGeminiActive(true);
+                      setApiKeySaved(true);
+                      setApiKeyStatus('ok');
+                      setApiKeyInput('');
+                    } else {
+                      setApiKeyStatus('error');
+                      setApiKeyError(result.error ?? 'Geçersiz key.');
+                    }
+                  }}
+                  className="flex-1 py-2 px-3 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white text-xs font-medium rounded-lg transition-all flex items-center justify-center gap-1"
+                >
+                  {apiKeyTesting ? <><IconLoading /> Test ediliyor...</> : apiKeySaved ? '✓ Kaydedildi' : 'Test Et & Kaydet'}
+                </button>
+                {geminiActive && (
+                  <button
+                    onClick={() => {
+                      saveGeminiKey('');
+                      setGeminiActive(false);
+                      setApiKeySaved(false);
+                      setApiKeyStatus('idle');
+                      setApiKeyInput('');
+                    }}
+                    className="py-2 px-3 bg-rose-50 hover:bg-rose-100 text-rose-600 text-xs font-medium rounded-lg border border-rose-200 transition-all"
+                  >Sil</button>
+                )}
+              </div>
+              <p className="text-[10px] text-slate-400">
+                {geminiActive ? 'Gemini aktif — GTX kullanılmıyor.' : 'Key girilmezse Google Translate (GTX) kullanılır.'}
+              </p>
             </div>
           </div>
         </div>
 
-        {/* Main Content Area */}
+        {/* Main Content */}
         <div className="lg:col-span-3 flex flex-col h-[700px]">
-          <div className="flex gap-4 mb-4">
+          <div className="flex gap-3 mb-4">
             {(['preview', 'logs', 'export'] as const).map(tab => (
               <button
                 key={tab}
                 onClick={() => setActiveTab(tab)}
-                className={`px-4 py-2 rounded-lg font-medium capitalize transition-colors ${activeTab === tab
-                  ? 'bg-indigo-100 text-indigo-700'
-                  : 'text-slate-500 hover:text-indigo-600'
-                  }`}
+                className={`px-4 py-2 rounded-lg font-medium capitalize transition-colors text-sm ${
+                  activeTab === tab ? 'bg-indigo-100 text-indigo-700' : 'text-slate-500 hover:text-indigo-600'
+                }`}
               >
                 {tab}
               </button>
@@ -374,6 +423,7 @@ export default function App() {
           </div>
 
           <div className="flex-1 bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden flex flex-col">
+
             {activeTab === 'preview' && (
               <div className="overflow-auto flex-1">
                 {groups.length === 0 ? (
@@ -385,37 +435,39 @@ export default function App() {
                   <table className="w-full text-left border-collapse">
                     <thead className="bg-slate-50 sticky top-0 z-10">
                       <tr>
-                        <th className="px-6 py-3 text-xs font-bold text-slate-500 uppercase tracking-wider">Field Info</th>
-                        <th className="px-6 py-3 text-xs font-bold text-slate-500 uppercase tracking-wider">English (EN)</th>
-                        <th className="px-6 py-3 text-xs font-bold text-slate-500 uppercase tracking-wider">Spanish (ES)</th>
-                        <th className="px-6 py-3 text-xs font-bold text-slate-500 uppercase tracking-wider">Russian (RU)</th>
+                        <th className="px-4 py-3 text-xs font-bold text-slate-500 uppercase tracking-wider">Field</th>
+                        <th className="px-4 py-3 text-xs font-bold text-slate-500 uppercase tracking-wider">
+                          {getLangInfo(sourceLang).flag} {sourceLang.toUpperCase()} (Source)
+                        </th>
+                        {targetLangs.map(locale => (
+                          <th key={locale} className="px-4 py-3 text-xs font-bold text-slate-500 uppercase tracking-wider">
+                            {getLangInfo(locale).flag} {locale.toUpperCase()}
+                          </th>
+                        ))}
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
                       {groups.map((group, idx) => (
                         <tr key={idx} className="hover:bg-slate-50/50 transition-colors">
-                          <td className="px-6 py-4">
-                            <div className="text-xs font-mono text-indigo-600 font-bold">{group.en.table_name}</div>
-                            <div className="text-xs text-slate-400">{group.en.column_name}</div>
-                            <div className="text-[10px] bg-slate-100 text-slate-500 px-1 rounded inline-block">ID: {group.en.foreign_key}</div>
+                          <td className="px-4 py-3">
+                            <div className="text-xs font-mono text-indigo-600 font-bold">{group.source.table_name}</div>
+                            <div className="text-xs text-slate-400">{group.source.column_name}</div>
+                            <div className="text-[10px] bg-slate-100 text-slate-500 px-1 rounded inline-block">ID: {group.source.foreign_key}</div>
                           </td>
-                          <td className="px-6 py-4">
-                            <div className="text-sm line-clamp-2" title={group.en.value}>{group.en.value}</div>
+                          <td className="px-4 py-3">
+                            <div className="text-sm line-clamp-2" title={group.source.value}>{group.source.value}</div>
                           </td>
-                          <td className="px-6 py-4">
-                            {group.es ? (
-                              <div className="text-sm line-clamp-2 italic text-slate-600" title={group.es.value}>{group.es.value}</div>
-                            ) : (
-                              <span className="text-xs text-slate-300">Pending...</span>
-                            )}
-                          </td>
-                          <td className="px-6 py-4">
-                            {group.ru ? (
-                              <div className="text-sm line-clamp-2 italic text-slate-600" title={group.ru.value}>{group.ru.value}</div>
-                            ) : (
-                              <span className="text-xs text-slate-300">Pending...</span>
-                            )}
-                          </td>
+                          {targetLangs.map(locale => (
+                            <td key={locale} className="px-4 py-3">
+                              {group.translations[locale] ? (
+                                <div className="text-sm line-clamp-2 italic text-slate-600" title={group.translations[locale].value}>
+                                  {group.translations[locale].value}
+                                </div>
+                              ) : (
+                                <span className="text-xs text-slate-300">Pending...</span>
+                              )}
+                            </td>
+                          ))}
                         </tr>
                       ))}
                     </tbody>
@@ -430,10 +482,11 @@ export default function App() {
                   <div className="text-slate-600">Waiting for activity...</div>
                 ) : (
                   logs.map((log, i) => (
-                    <div key={i} className={`flex gap-3 ${log.type === 'error' ? 'text-rose-400' :
+                    <div key={i} className={`flex gap-3 ${
+                      log.type === 'error' ? 'text-rose-400' :
                       log.type === 'success' ? 'text-emerald-400' :
-                        log.type === 'warning' ? 'text-amber-400' : ''
-                      }`}>
+                      log.type === 'warning' ? 'text-amber-400' : ''
+                    }`}>
                       <span className="text-slate-600">[{log.timestamp.toLocaleTimeString()}]</span>
                       <span>{log.message}</span>
                     </div>
@@ -448,10 +501,14 @@ export default function App() {
                   <IconCheck />
                 </div>
                 <h3 className="text-2xl font-bold mb-2">Ready to Export</h3>
-                <p className="text-slate-500 max-w-md mb-8">
-                  Generated SQL script will perform `INSERT` for new translations and `UPDATE` for existing ones
-                  without affecting your current data structure.
+                <p className="text-slate-500 max-w-md mb-2">
+                  Generated SQL script will perform DELETE + INSERT for each translated locale.
                 </p>
+                {targetLangs.length > 0 && (
+                  <p className="text-sm text-slate-400 mb-8">
+                    Locales: {targetLangs.map(l => `${getLangInfo(l).flag} ${l.toUpperCase()}`).join(' · ')}
+                  </p>
+                )}
                 <div className="flex gap-4">
                   <button
                     onClick={downloadSQL}
@@ -462,9 +519,9 @@ export default function App() {
                   </button>
                   <button
                     onClick={() => {
-                      const sql = generateSQL(groups);
+                      const sql = generateSQL(groups, targetLangs);
                       navigator.clipboard.writeText(sql);
-                      addLog("SQL copied to clipboard.", "success");
+                      addLog('SQL copied to clipboard.', 'success');
                     }}
                     className="px-8 py-3 bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 font-bold rounded-xl shadow-sm transition-all"
                   >

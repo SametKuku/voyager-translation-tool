@@ -18,17 +18,19 @@ export const isGeminiAvailable = (): boolean => {
 
 export const translateWithGemini = async (
     text: string,
-    targetLocale: 'es' | 'ru'
+    targetLocale: string
 ): Promise<string> => {
     if (!text || text.trim() === '') return text;
     const GEMINI_API_KEY = getGeminiKey();
     if (!GEMINI_API_KEY) throw new Error('Gemini API key not configured');
 
     const languageMap: Record<string, string> = {
-        es: 'Spanish',
-        ru: 'Russian',
+        tr: 'Turkish', es: 'Spanish', ru: 'Russian', de: 'German',
+        fr: 'French', ar: 'Arabic', zh: 'Chinese', pt: 'Portuguese',
+        it: 'Italian', ja: 'Japanese', ko: 'Korean', nl: 'Dutch',
+        pl: 'Polish', uk: 'Ukrainian',
     };
-    const targetLanguage = languageMap[targetLocale];
+    const targetLanguage = languageMap[targetLocale] ?? targetLocale;
 
     const prompt = `Translate the following text to ${targetLanguage}.
 
@@ -66,7 +68,7 @@ ${text}`;
 
 export const translateBatchWithGemini = async (
     texts: string[],
-    targetLocale: 'es' | 'ru'
+    targetLocale: string
 ): Promise<string[]> => {
     return Promise.all(texts.map(text => translateWithGemini(text, targetLocale)));
 };

@@ -8,7 +8,7 @@ import { translateBatch } from './lingvaService';
  */
 export const translateComplexHtml = async (
     htmlContent: string,
-    targetLocale: 'es' | 'ru'
+    targetLocale: string
 ): Promise<string> => {
     if (!htmlContent) return htmlContent;
 

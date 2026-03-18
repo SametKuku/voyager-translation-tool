@@ -32,7 +32,7 @@ import { isGeminiAvailable, translateBatchWithGemini } from './geminiService';
 
 export const translateWithGoogleGTX = async (
     text: string,
-    targetLocale: 'es' | 'ru'
+    targetLocale: string
 ): Promise<string> => {
     if (!text || text.trim() === '') return text;
 
@@ -73,7 +73,7 @@ export const translateWithGoogleGTX = async (
 
 export const translateBatch = async (
     texts: string[],
-    targetLocale: 'es' | 'ru'
+    targetLocale: string
 ): Promise<string[]> => {
     if (isGeminiAvailable()) {
         return translateBatchWithGemini(texts, targetLocale);

@@ -26,7 +26,29 @@ export interface ProcessingLog {
 
 export interface TranslationGroup {
   key: string; // table_name:column_name:foreign_key
-  en: VoyagerTranslation;
-  es?: VoyagerTranslation;
-  ru?: VoyagerTranslation;
+  source: VoyagerTranslation; // source locale (usually 'en')
+  translations: Record<string, VoyagerTranslation>; // locale -> data
 }
+
+export interface LanguageInfo {
+  code: string;
+  name: string;
+  flag: string;
+}
+
+export const SUPPORTED_LANGUAGES: LanguageInfo[] = [
+  { code: 'tr', name: 'Turkish',    flag: '🇹🇷' },
+  { code: 'es', name: 'Spanish',    flag: '🇪🇸' },
+  { code: 'ru', name: 'Russian',    flag: '🇷🇺' },
+  { code: 'de', name: 'German',     flag: '🇩🇪' },
+  { code: 'fr', name: 'French',     flag: '🇫🇷' },
+  { code: 'ar', name: 'Arabic',     flag: '🇸🇦' },
+  { code: 'zh', name: 'Chinese',    flag: '🇨🇳' },
+  { code: 'pt', name: 'Portuguese', flag: '🇵🇹' },
+  { code: 'it', name: 'Italian',    flag: '🇮🇹' },
+  { code: 'ja', name: 'Japanese',   flag: '🇯🇵' },
+  { code: 'ko', name: 'Korean',     flag: '🇰🇷' },
+  { code: 'nl', name: 'Dutch',      flag: '🇳🇱' },
+  { code: 'pl', name: 'Polish',     flag: '🇵🇱' },
+  { code: 'uk', name: 'Ukrainian',  flag: '🇺🇦' },
+];

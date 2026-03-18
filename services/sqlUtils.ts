@@ -8,8 +8,6 @@ import { VoyagerTranslation, TranslationGroup } from '../types';
 export const parseVoyagerSQL = (sql: string): VoyagerTranslation[] => {
   const translations: VoyagerTranslation[] = [];
 
-  // Normalize SQL slightly to make finding start easier
-  // We only care about the VALUES part of the INSERT INTO statement
   const insertPrefixRegex = /INSERT INTO\s+[`"]?translations[`"]?\s+\(([^)]+)\)\s+VALUES\s*/gi;
   let match;
 
@@ -17,54 +15,38 @@ export const parseVoyagerSQL = (sql: string): VoyagerTranslation[] => {
     const columns = match[1].split(',').map(c => c.trim().replace(/[`"']/g, ''));
     const startIdx = match.index + match[0].length;
 
-    // Parse the VALUES part starting from startIdx
-    let currentIndex = startIdx;
     let inTuple = false;
     let inQuote = false;
     let quoteChar = '';
     let currentToken = '';
     let currentRowValues: string[] = [];
 
-    // Iterate through the SQL string from the VALUES start
     for (let i = startIdx; i < sql.length; i++) {
       const char = sql[i];
-      const prevChar = i > 0 ? sql[i - 1] : '';
 
-      // Stop if we hit a semicolon outside of quotes/tuples, marking end of statement
-      if (char === ';' && !inQuote && !inTuple) {
-        break;
-      }
+      if (char === ';' && !inQuote && !inTuple) break;
 
       if (inQuote) {
-        // Checking for end of quote
         if (char === quoteChar) {
-          // If double up (SQL standard), handle it
           if (i + 1 < sql.length && sql[i + 1] === quoteChar) {
-            currentToken += char; // add one quote
-            i++; // skip next
+            currentToken += char;
+            i++;
           } else {
-            // End of quote
             inQuote = false;
           }
         } else if (char === '\\') {
-          // Handle backslash escape (MySQL style)
           if (i + 1 < sql.length) {
             const nextChar = sql[i + 1];
-            // If escaping the quote char, backslash, OR Double Quote (common in mixed content)
             if (nextChar === quoteChar || nextChar === '\\' || nextChar === '"') {
               currentToken += nextChar;
               i++;
             } else if (nextChar === 'n') {
-              // Convert \n to real newline
               currentToken += '\n';
               i++;
             } else if (nextChar === 'r') {
-              // Convert \r to real return
               currentToken += '\r';
               i++;
             } else {
-              // Unknown escape, keep backslash (safer) or strip? 
-              // Usually keeping it is safer unless we know exact rules.
               currentToken += char;
             }
           } else {
@@ -74,32 +56,24 @@ export const parseVoyagerSQL = (sql: string): VoyagerTranslation[] => {
           currentToken += char;
         }
       } else {
-        // NOT in quote
         if (char === '(' && !inTuple) {
           inTuple = true;
           currentRowValues = [];
           currentToken = '';
         } else if (char === ')' && inTuple) {
-          // End of tuple
           inTuple = false;
-          // Push last valid token
           currentRowValues.push(currentToken.trim());
           currentToken = '';
-
-          // Process the completed row
           processRow(currentRowValues, columns, translations);
         } else if (char === ',' && inTuple) {
-          // Value separator
           currentRowValues.push(currentToken.trim());
           currentToken = '';
         } else if ((char === "'" || char === '"' || char === '`') && inTuple) {
-          // Start of quote
           inQuote = true;
           quoteChar = char;
         } else if (inTuple) {
           currentToken += char;
         }
-        // If not in tuple, we mostly ignore whitespace and commas between tuples
       }
     }
   }
@@ -110,10 +84,8 @@ export const parseVoyagerSQL = (sql: string): VoyagerTranslation[] => {
 const processRow = (values: string[], columns: string[], translations: VoyagerTranslation[]) => {
   const row: any = {};
 
-  // Clean up values (remove surrounding quotes if simple strings, handle NULL)
   const cleanedValues = values.map(v => {
     if (v.toUpperCase() === 'NULL') return null;
-    // If starts and ends with same quote, strip them
     if ((v.startsWith("'") && v.endsWith("'")) || (v.startsWith('"') && v.endsWith('"'))) {
       return v.slice(1, -1);
     }
@@ -137,47 +109,67 @@ const processRow = (values: string[], columns: string[], translations: VoyagerTr
   }
 };
 
-export const groupTranslations = (list: VoyagerTranslation[]): TranslationGroup[] => {
+/**
+ * Detects all unique locales in the parsed data.
+ * Returns { sourceLang, otherLangs } where sourceLang is the most common locale (usually 'en').
+ */
+export const detectLanguages = (list: VoyagerTranslation[]): { sourceLang: string; allLangs: string[] } => {
+  const counts: Record<string, number> = {};
+  list.forEach(t => {
+    counts[t.locale] = (counts[t.locale] || 0) + 1;
+  });
+
+  const sorted = Object.entries(counts).sort((a, b) => b[1] - a[1]);
+  const allLangs = sorted.map(e => e[0]);
+
+  // 'en' is always preferred as source if present, otherwise take the most frequent
+  const sourceLang = allLangs.includes('en') ? 'en' : allLangs[0] ?? 'en';
+
+  return { sourceLang, allLangs };
+};
+
+/**
+ * Groups translations by (table_name, column_name, foreign_key).
+ * Source language rows become group.source, all others go into group.translations map.
+ */
+export const groupTranslations = (list: VoyagerTranslation[], sourceLang = 'en'): TranslationGroup[] => {
   const map = new Map<string, TranslationGroup>();
 
   list.forEach(item => {
-    // Generate a unique key for the translation group
     const key = `${item.table_name}:${item.column_name}:${item.foreign_key}`;
     if (!map.has(key)) {
-      // Initialize with default empty English structure if not found
-      map.set(key, { key, en: { ...item, locale: 'en', value: '' } });
+      map.set(key, {
+        key,
+        source: { ...item, locale: sourceLang, value: '' },
+        translations: {},
+      });
     }
     const group = map.get(key)!;
 
-    // Assign value to the correct locale slot
-    if (item.locale === 'en') group.en = item;
-    else if (item.locale === 'es') group.es = item;
-    else if (item.locale === 'ru') group.ru = item;
+    if (item.locale === sourceLang) {
+      group.source = item;
+    } else {
+      group.translations[item.locale] = item;
+    }
   });
 
-  // Return all groups that have an English source value.
-  // We assume 'en' is the source of truth for translation.
-  return Array.from(map.values()).filter(g => g.en && g.en.value && g.en.locale === 'en');
+  return Array.from(map.values()).filter(g => g.source && g.source.value);
 };
 
-export const generateSQL = (groups: TranslationGroup[]): string => {
+/**
+ * Generates SQL for given target locales only.
+ */
+export const generateSQL = (groups: TranslationGroup[], targetLocales: string[]): string => {
   let sql = "-- Voyager Auto-Generated Translations\n";
   sql += "SET AUTOCOMMIT = 0;\nSTART TRANSACTION;\n\n";
 
   groups.forEach(group => {
-    const targets = [
-      { locale: 'es', data: group.es },
-      { locale: 'ru', data: group.ru }
-    ];
-
-    targets.forEach(target => {
-      if (target.data && target.data.value) {
-        // Standard SQL escaping: replace single quote with two single quotes
-        const escapedValue = target.data.value.replace(/'/g, "''").replace(/\\/g, "\\\\");
-
-        // Optimize: Use REPLACE INTO or ON DUPLICATE KEY UPDATE if supported, but here acts as safe upsert
-        sql += `DELETE FROM translations WHERE table_name = '${group.en.table_name}' AND column_name = '${group.en.column_name}' AND foreign_key = '${group.en.foreign_key}' AND locale = '${target.locale}';\n`;
-        sql += `INSERT INTO translations (table_name, column_name, foreign_key, locale, value, created_at, updated_at) VALUES ('${group.en.table_name}', '${group.en.column_name}', '${group.en.foreign_key}', '${target.locale}', '${escapedValue}', NOW(), NOW());\n`;
+    targetLocales.forEach(locale => {
+      const data = group.translations[locale];
+      if (data && data.value) {
+        const escapedValue = data.value.replace(/'/g, "''").replace(/\\/g, "\\\\");
+        sql += `DELETE FROM translations WHERE table_name = '${group.source.table_name}' AND column_name = '${group.source.column_name}' AND foreign_key = '${group.source.foreign_key}' AND locale = '${locale}';\n`;
+        sql += `INSERT INTO translations (table_name, column_name, foreign_key, locale, value, created_at, updated_at) VALUES ('${group.source.table_name}', '${group.source.column_name}', '${group.source.foreign_key}', '${locale}', '${escapedValue}', NOW(), NOW());\n`;
       }
     });
   });
