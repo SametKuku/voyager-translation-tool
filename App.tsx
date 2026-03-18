@@ -37,6 +37,7 @@ export default function App() {
   const [sourceLang, setSourceLang] = useState<string>('en');
   const [detectedLangs, setDetectedLangs] = useState<string[]>([]);
   const [targetLangs, setTargetLangs] = useState<string[]>([]);
+  const [parsedRows, setParsedRows] = useState<VoyagerTranslation[]>([]);
 
   const [geminiActive, setGeminiActive] = useState<boolean>(isGeminiAvailable());
   const [apiKeyInput, setApiKeyInput] = useState<string>('');
@@ -82,6 +83,7 @@ export default function App() {
       try {
         const parsed = parseVoyagerSQL(content);
         addLog(`Successfully parsed ${parsed.length} rows from SQL.`);
+        setParsedRows(parsed);
 
         const { sourceLang: src, allLangs } = detectLanguages(parsed);
         const others = allLangs.filter(l => l !== src);
@@ -113,6 +115,15 @@ export default function App() {
     setTargetLangs(prev =>
       prev.includes(code) ? prev.filter(l => l !== code) : [...prev, code]
     );
+  };
+
+  const changeSourceLang = (newSource: string, parsed: VoyagerTranslation[]) => {
+    setSourceLang(newSource);
+    const grouped = groupTranslations(parsed, newSource);
+    setGroups(grouped);
+    const others = detectedLangs.filter(l => l !== newSource);
+    setTargetLangs(others);
+    addLog(`Source language changed to ${getLangInfo(newSource).flag} ${getLangInfo(newSource).name.toUpperCase()}`, 'info');
   };
 
   const startTranslation = async () => {
@@ -288,14 +299,36 @@ export default function App() {
             <h2 className="text-sm font-bold text-slate-400 uppercase tracking-wider mb-4">Languages</h2>
 
             {/* Source Language */}
-            {detectedLangs.length > 0 && (
-              <div className="mb-3">
-                <p className="text-[10px] text-slate-400 font-semibold uppercase mb-1.5">Source</p>
-                <span className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-indigo-50 text-indigo-700 border border-indigo-200 rounded-lg text-xs font-semibold">
-                  {getLangInfo(sourceLang).flag} {getLangInfo(sourceLang).name}
-                </span>
-              </div>
-            )}
+            <div className="mb-3">
+              <p className="text-[10px] text-slate-400 font-semibold uppercase mb-1.5">
+                Source Language
+                {detectedLangs.length > 0 && (
+                  <span className="ml-1 text-indigo-400 normal-case font-normal">(auto-detected)</span>
+                )}
+              </p>
+              <select
+                value={sourceLang}
+                onChange={e => {
+                  if (parsedRows.length > 0) {
+                    changeSourceLang(e.target.value, parsedRows);
+                  } else {
+                    setSourceLang(e.target.value);
+                  }
+                }}
+                className="w-full px-2.5 py-1.5 text-sm border border-slate-200 rounded-lg bg-slate-50 focus:outline-none focus:ring-2 focus:ring-indigo-300 text-slate-700"
+              >
+                {SUPPORTED_LANGUAGES.map(l => (
+                  <option key={l.code} value={l.code}>
+                    {l.flag} {l.name} ({l.code.toUpperCase()})
+                  </option>
+                ))}
+              </select>
+              {detectedLangs.length > 0 && !detectedLangs.includes(sourceLang) && (
+                <p className="text-[10px] text-amber-500 mt-1">
+                  ⚠ Bu dil SQL'de bulunamadı — ana içerik tablolarda olabilir.
+                </p>
+              )}
+            </div>
 
             {/* Target Languages */}
             <div className="mb-3">
