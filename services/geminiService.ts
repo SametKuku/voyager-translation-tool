@@ -1,8 +1,19 @@
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const GEMINI_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent';
 
+const getGeminiKey = (): string => {
+    return localStorage.getItem('GEMINI_API_KEY') || process.env.GEMINI_API_KEY || '';
+};
+
+export const saveGeminiKey = (key: string): void => {
+    if (key.trim()) {
+        localStorage.setItem('GEMINI_API_KEY', key.trim());
+    } else {
+        localStorage.removeItem('GEMINI_API_KEY');
+    }
+};
+
 export const isGeminiAvailable = (): boolean => {
-    return !!(GEMINI_API_KEY && GEMINI_API_KEY.trim() !== '');
+    return getGeminiKey().trim() !== '';
 };
 
 export const translateWithGemini = async (
@@ -10,6 +21,7 @@ export const translateWithGemini = async (
     targetLocale: 'es' | 'ru'
 ): Promise<string> => {
     if (!text || text.trim() === '') return text;
+    const GEMINI_API_KEY = getGeminiKey();
     if (!GEMINI_API_KEY) throw new Error('Gemini API key not configured');
 
     const languageMap: Record<string, string> = {

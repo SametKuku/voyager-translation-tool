@@ -12,7 +12,7 @@ import {
   generateSQL
 } from './services/sqlUtils';
 import { translateBatch } from './services/lingvaService';
-import { isGeminiAvailable } from './services/geminiService';
+import { isGeminiAvailable, saveGeminiKey } from './services/geminiService';
 import { translateComplexHtml } from './services/htmlTranslator';
 import { slugify } from './services/textUtils';
 // Icons using SVG for simplicity
@@ -27,6 +27,9 @@ export default function App() {
   const [logs, setLogs] = useState<ProcessingLog[]>([]);
   const [groups, setGroups] = useState<TranslationGroup[]>([]);
   const [activeTab, setActiveTab] = useState<'preview' | 'logs' | 'export'>('preview');
+  const [geminiActive, setGeminiActive] = useState<boolean>(isGeminiAvailable());
+  const [apiKeyInput, setApiKeyInput] = useState<string>('');
+  const [apiKeySaved, setApiKeySaved] = useState<boolean>(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const addLog = useCallback((message: string, type: ProcessingLog['type'] = 'info') => {
@@ -182,7 +185,7 @@ export default function App() {
           while maintaining HTML safety and technical placeholders.
         </p>
         <div className="mt-3 inline-flex items-center gap-2">
-          {isGeminiAvailable() ? (
+          {geminiActive ? (
             <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-blue-100 text-blue-700 border border-blue-200">
               <span className="w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse inline-block"></span>
               Gemini AI
@@ -254,6 +257,48 @@ export default function App() {
                   </div>
                   <div className="text-xs text-slate-500">Completed</div>
                 </div>
+              </div>
+            </div>
+
+            <div className="mt-6 pt-6 border-t border-slate-100">
+              <h3 className="text-sm font-bold text-slate-400 uppercase tracking-wider mb-3">Gemini API Key</h3>
+              <div className="space-y-2">
+                <input
+                  type="password"
+                  value={apiKeyInput}
+                  onChange={e => { setApiKeyInput(e.target.value); setApiKeySaved(false); }}
+                  placeholder={geminiActive ? '••••••••••••••••' : 'AIzaSy...'}
+                  className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-300 bg-slate-50"
+                />
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => {
+                      saveGeminiKey(apiKeyInput);
+                      setGeminiActive(apiKeyInput.trim() !== '');
+                      setApiKeySaved(true);
+                      setApiKeyInput('');
+                    }}
+                    className="flex-1 py-2 px-3 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium rounded-lg transition-all"
+                  >
+                    {apiKeySaved ? '✓ Kaydedildi' : 'Kaydet'}
+                  </button>
+                  {geminiActive && (
+                    <button
+                      onClick={() => {
+                        saveGeminiKey('');
+                        setGeminiActive(false);
+                        setApiKeySaved(false);
+                        setApiKeyInput('');
+                      }}
+                      className="py-2 px-3 bg-rose-50 hover:bg-rose-100 text-rose-600 text-sm font-medium rounded-lg border border-rose-200 transition-all"
+                    >
+                      Sil
+                    </button>
+                  )}
+                </div>
+                <p className="text-[10px] text-slate-400">
+                  {geminiActive ? 'Gemini aktif — GTX kullanılmıyor.' : 'Key girilmezse Google Translate (GTX) kullanılır.'}
+                </p>
               </div>
             </div>
           </div>
