@@ -10,9 +10,11 @@ import {
 } from './types';
 import {
   parseVoyagerSQL,
+  parseAllTables,
   groupTranslations,
   generateSQL,
   detectLanguages,
+  detectModelLanguage,
 } from './services/sqlUtils';
 import { translateBatch } from './services/lingvaService';
 import { isGeminiAvailable, saveGeminiKey, testGeminiKey } from './services/geminiService';
@@ -38,6 +40,8 @@ export default function App() {
   const [detectedLangs, setDetectedLangs] = useState<string[]>([]);
   const [targetLangs, setTargetLangs] = useState<string[]>([]);
   const [parsedRows, setParsedRows] = useState<VoyagerTranslation[]>([]);
+  const [modelData, setModelData] = useState<Map<string, string>>(new Map());
+  const [modelLang, setModelLang] = useState<string | null>(null);
 
   const [geminiActive, setGeminiActive] = useState<boolean>(isGeminiAvailable());
   const [apiKeyInput, setApiKeyInput] = useState<string>('');
@@ -82,23 +86,42 @@ export default function App() {
       const content = event.target?.result as string;
       try {
         const parsed = parseVoyagerSQL(content);
-        addLog(`Successfully parsed ${parsed.length} rows from SQL.`);
+        addLog(`Successfully parsed ${parsed.length} rows from translations table.`);
         setParsedRows(parsed);
+
+        // Parse all model tables for native-language source content
+        addLog('Scanning model tables for native content...');
+        const mData = parseAllTables(content);
+        setModelData(mData);
+        addLog(`Found ${mData.size} model table values.`);
+
+        const detectedNativeLang = detectModelLanguage(mData);
+        setModelLang(detectedNativeLang);
 
         const { sourceLang: src, allLangs } = detectLanguages(parsed);
         const others = allLangs.filter(l => l !== src);
 
-        setSourceLang(src);
+        // If model tables have a detectable language not in translations, prefer it as source
+        const finalSrc = (detectedNativeLang && !allLangs.includes(detectedNativeLang))
+          ? detectedNativeLang
+          : src;
+
+        setSourceLang(finalSrc);
         setDetectedLangs(allLangs);
         setTargetLangs(others);
 
-        const srcInfo = getLangInfo(src);
-        addLog(`Source language detected: ${srcInfo.flag} ${srcInfo.name} (${src.toUpperCase()})`, 'success');
+        if (detectedNativeLang) {
+          const nInfo = getLangInfo(detectedNativeLang);
+          addLog(`Native content detected in model tables: ${nInfo.flag} ${nInfo.name} — set as source.`, 'success');
+        } else {
+          const srcInfo = getLangInfo(finalSrc);
+          addLog(`Source language detected: ${srcInfo.flag} ${srcInfo.name} (${finalSrc.toUpperCase()})`, 'success');
+        }
         if (others.length > 0) {
           addLog(`Existing translations found: ${others.map(l => getLangInfo(l).flag + ' ' + l.toUpperCase()).join(', ')}`, 'info');
         }
 
-        const grouped = groupTranslations(parsed, src);
+        const grouped = groupTranslations(parsed, finalSrc, mData);
         addLog(`Identified ${grouped.length} translation groups.`);
 
         setGroups(grouped);
@@ -119,7 +142,7 @@ export default function App() {
 
   const changeSourceLang = (newSource: string, parsed: VoyagerTranslation[]) => {
     setSourceLang(newSource);
-    const grouped = groupTranslations(parsed, newSource);
+    const grouped = groupTranslations(parsed, newSource, modelData);
     setGroups(grouped);
     const others = detectedLangs.filter(l => l !== newSource);
     setTargetLangs(others);
@@ -323,9 +346,14 @@ export default function App() {
                   </option>
                 ))}
               </select>
-              {detectedLangs.length > 0 && !detectedLangs.includes(sourceLang) && (
+              {modelLang === sourceLang && !detectedLangs.includes(sourceLang) && (
+                <p className="text-[10px] text-emerald-600 mt-1">
+                  ✓ Ana içerik model tablolardan okunuyor.
+                </p>
+              )}
+              {detectedLangs.length > 0 && !detectedLangs.includes(sourceLang) && modelLang !== sourceLang && (
                 <p className="text-[10px] text-amber-500 mt-1">
-                  ⚠ Bu dil SQL'de bulunamadı — ana içerik tablolarda olabilir.
+                  ⚠ Bu dil SQL'de bulunamadı.
                 </p>
               )}
             </div>
