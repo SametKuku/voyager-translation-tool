@@ -44,6 +44,7 @@ export default function App() {
   const [modelLang, setModelLang] = useState<string | null>(null);
 
   const [geminiActive, setGeminiActive] = useState<boolean>(isGeminiAvailable());
+  const [progress, setProgress] = useState<{ done: number; total: number; lang: string } | null>(null);
   const [apiKeyInput, setApiKeyInput] = useState<string>('');
   const [apiKeySaved, setApiKeySaved] = useState<boolean>(false);
   const [apiKeyTesting, setApiKeyTesting] = useState<boolean>(false);
@@ -85,12 +86,15 @@ export default function App() {
     reader.onload = async (event) => {
       const content = event.target?.result as string;
       try {
+        // Yield to UI before heavy parsing
+        await sleep(0);
         const parsed = parseVoyagerSQL(content);
         addLog(`Successfully parsed ${parsed.length} rows from translations table.`);
         setParsedRows(parsed);
 
         // Parse all model tables for native-language source content
         addLog('Scanning model tables for native content...');
+        await sleep(0);
         const mData = parseAllTables(content);
         setModelData(mData);
         addLog(`Found ${mData.size} model table values.`);
@@ -157,6 +161,8 @@ export default function App() {
 
     const updatedGroups = [...groups];
     const batchSize = 50;
+    const totalWork = updatedGroups.length * targetLangs.length;
+    let doneWork = 0;
 
     try {
       for (const locale of targetLangs) {
@@ -199,6 +205,8 @@ export default function App() {
               }
             });
 
+            doneWork += batch.length;
+            setProgress({ done: doneWork, total: totalWork, lang: `${langInfo.flag} ${locale.toUpperCase()}` });
             setGroups([...updatedGroups]);
             i += batchSize;
             await sleep(50);
@@ -221,10 +229,12 @@ export default function App() {
 
       addLog('All translations finished!', 'success');
       setStatus(ProcessStatus.COMPLETED);
+      setProgress(null);
       setActiveTab('export');
     } catch (error) {
       addLog(`Unexpected failure: ${error instanceof Error ? error.message : 'Unknown error'}`, 'error');
       setStatus(ProcessStatus.ERROR);
+      setProgress(null);
     }
   };
 
@@ -239,6 +249,7 @@ export default function App() {
     setDetectedLangs([]);
     setTargetLangs([]);
     setActiveTab('preview');
+    setProgress(null);
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
@@ -310,6 +321,22 @@ export default function App() {
               >
                 {status === ProcessStatus.TRANSLATING ? <><IconLoading /> Translating...</> : status === ProcessStatus.COMPLETED ? '↻ Re-translate' : 'Start Translation'}
               </button>
+
+              {progress && (
+                <div className="space-y-1">
+                  <div className="flex justify-between text-[10px] text-slate-500">
+                    <span>{progress.lang}</span>
+                    <span>{Math.round((progress.done / progress.total) * 100)}%</span>
+                  </div>
+                  <div className="w-full bg-slate-100 rounded-full h-2 overflow-hidden">
+                    <div
+                      className="bg-indigo-500 h-2 rounded-full transition-all duration-300"
+                      style={{ width: `${(progress.done / progress.total) * 100}%` }}
+                    />
+                  </div>
+                  <div className="text-[10px] text-slate-400 text-right">{progress.done} / {progress.total}</div>
+                </div>
+              )}
 
               {status === ProcessStatus.COMPLETED && (
                 <button
