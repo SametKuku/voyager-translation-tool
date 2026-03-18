@@ -67,11 +67,27 @@ ${text}`;
     return result.trim();
 };
 
+const GEMINI_CONCURRENCY = 5; // max parallel requests to avoid rate limiting
+
 export const translateBatchWithGemini = async (
     texts: string[],
     targetLocale: string
 ): Promise<string[]> => {
-    return Promise.all(texts.map(text => translateWithGemini(text, targetLocale)));
+    const results: string[] = new Array(texts.length);
+
+    for (let i = 0; i < texts.length; i += GEMINI_CONCURRENCY) {
+        const chunk = texts.slice(i, i + GEMINI_CONCURRENCY);
+        const chunkResults = await Promise.all(
+            chunk.map(text => translateWithGemini(text, targetLocale))
+        );
+        chunkResults.forEach((r, j) => { results[i + j] = r; });
+        // Small delay between chunks to respect rate limits
+        if (i + GEMINI_CONCURRENCY < texts.length) {
+            await new Promise(r => setTimeout(r, 300));
+        }
+    }
+
+    return results;
 };
 
 export const testGeminiKey = async (key: string): Promise<{ ok: boolean; error?: string }> => {

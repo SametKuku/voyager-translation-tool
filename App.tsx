@@ -171,10 +171,8 @@ export default function App() {
 
           addLog(`[${langInfo.flag} ${locale.toUpperCase()}] Batch ${currentBatchNum}/${totalBatches} (${batch.length} items)...`);
 
-          const isComplexHtmlBatch = batch.some(g =>
-            g.source.column_name === 'teknik_tablo_html' ||
-            g.source.column_name === 'features'
-          );
+          const HTML_TAG_RE = /<[a-zA-Z][^>]*>|<\/[a-zA-Z]+>/;
+          const isComplexHtmlBatch = batch.some(g => HTML_TAG_RE.test(g.source.value));
 
           try {
             let translations: string[];
@@ -228,6 +226,20 @@ export default function App() {
       addLog(`Unexpected failure: ${error instanceof Error ? error.message : 'Unknown error'}`, 'error');
       setStatus(ProcessStatus.ERROR);
     }
+  };
+
+  const resetAll = () => {
+    setStatus(ProcessStatus.IDLE);
+    setGroups([]);
+    setLogs([]);
+    setParsedRows([]);
+    setModelData(new Map());
+    setModelLang(null);
+    setSourceLang('en');
+    setDetectedLangs([]);
+    setTargetLangs([]);
+    setActiveTab('preview');
+    if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
   const downloadSQL = () => {
@@ -293,10 +305,10 @@ export default function App() {
 
               <button
                 onClick={startTranslation}
-                disabled={groups.length === 0 || targetLangs.length === 0 || status === ProcessStatus.TRANSLATING || status === ProcessStatus.COMPLETED}
+                disabled={groups.length === 0 || targetLangs.length === 0 || status === ProcessStatus.TRANSLATING}
                 className="w-full py-2.5 px-4 bg-white hover:bg-slate-50 border-2 border-indigo-600 text-indigo-600 disabled:opacity-50 font-semibold rounded-xl transition-all flex items-center justify-center gap-2 text-sm"
               >
-                {status === ProcessStatus.TRANSLATING ? <><IconLoading /> Translating...</> : 'Start Translation'}
+                {status === ProcessStatus.TRANSLATING ? <><IconLoading /> Translating...</> : status === ProcessStatus.COMPLETED ? '↻ Re-translate' : 'Start Translation'}
               </button>
 
               {status === ProcessStatus.COMPLETED && (
@@ -305,6 +317,16 @@ export default function App() {
                   className="w-full py-2.5 px-4 bg-emerald-600 hover:bg-emerald-700 text-white font-medium rounded-xl transition-all shadow-sm text-sm"
                 >
                   Download SQL
+                </button>
+              )}
+
+              {(groups.length > 0 || status !== ProcessStatus.IDLE) && (
+                <button
+                  onClick={resetAll}
+                  disabled={status === ProcessStatus.TRANSLATING}
+                  className="w-full py-2 px-4 bg-slate-100 hover:bg-slate-200 text-slate-500 disabled:opacity-50 font-medium rounded-xl transition-all text-xs"
+                >
+                  ✕ Reset / New File
                 </button>
               )}
             </div>
