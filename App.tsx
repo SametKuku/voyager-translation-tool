@@ -15,8 +15,6 @@ import { translateBatch } from './services/lingvaService';
 import { isGeminiAvailable } from './services/geminiService';
 import { translateComplexHtml } from './services/htmlTranslator';
 import { slugify } from './services/textUtils';
-import { preProcessEnglishSource } from './services/terminologyService';
-
 // Icons using SVG for simplicity
 const IconUpload = () => <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" /></svg>;
 const IconCheck = () => <svg className="w-5 h-5 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>;
@@ -282,11 +280,6 @@ export default function App() {
                       const cleanEnTexts = batch.map(g => {
                         let text = g.en.value.toLowerCase().replace(/[-_]/g, ' ').trim();
 
-                        // Use the universal pre-processor to fix source typos like 'desct'
-                        text = preProcessEnglishSource(text);
-
-                        // Domain specific fixes to prevent bad translations
-                        // e.g. "Screen" -> "Ekran" (TV) -> Should be "Setchatyy" (Mesh/Filter)
                         if (text === 'screen') text = 'screen filter';
                         if (text === 'disc') text = 'disc filter';
 

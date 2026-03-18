@@ -28,7 +28,6 @@ const restoreHtml = (maskedText: string, tags: string[]): string => {
     });
 };
 
-import { applySectoralTerminology, preProcessEnglishSource } from './terminologyService';
 import { isGeminiAvailable, translateBatchWithGemini } from './geminiService';
 
 export const translateWithGoogleGTX = async (
@@ -38,11 +37,7 @@ export const translateWithGoogleGTX = async (
     if (!text || text.trim() === '') return text;
 
     try {
-        // PRE-PROCESS: Fix source errors (e.g., Desct -> Disc)
-        const cleanSource = preProcessEnglishSource(text);
-
-        // Protect HTML tags and placeholders
-        const { maskedText, tags } = protectHtml(cleanSource);
+        const { maskedText, tags } = protectHtml(text);
 
         const url = `/translate-api/translate_a/single?client=gtx&sl=auto&tl=${targetLocale}&dt=t&q=${encodeURIComponent(maskedText)}`;
 
@@ -65,11 +60,7 @@ export const translateWithGoogleGTX = async (
             translatedText = maskedText;
         }
 
-        // Restore tags into the translated text
-        const restoredText = restoreHtml(translatedText, tags);
-
-        // APPLY SECTORAL TERMINOLOGY & BRAND PROTECTION
-        return applySectoralTerminology(restoredText, targetLocale);
+        return restoreHtml(translatedText, tags);
 
     } catch (error: any) {
         if (error.message && error.message.includes('429')) {
