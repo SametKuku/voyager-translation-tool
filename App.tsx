@@ -33,6 +33,24 @@ export default function App() {
   const [apiKeyTesting, setApiKeyTesting] = useState<boolean>(false);
   const [apiKeyStatus, setApiKeyStatus] = useState<'idle' | 'ok' | 'error'>('idle');
   const [apiKeyError, setApiKeyError] = useState<string>('');
+
+  React.useEffect(() => {
+    const saved = localStorage.getItem('GEMINI_API_KEY');
+    if (saved) {
+      setApiKeyTesting(true);
+      testGeminiKey(saved).then(result => {
+        setApiKeyTesting(false);
+        if (result.ok) {
+          setApiKeyStatus('ok');
+          setGeminiActive(true);
+        } else {
+          setApiKeyStatus('error');
+          setApiKeyError(result.error ?? 'Geçersiz key.');
+          setGeminiActive(false);
+        }
+      });
+    }
+  }, []);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const addLog = useCallback((message: string, type: ProcessingLog['type'] = 'info') => {
