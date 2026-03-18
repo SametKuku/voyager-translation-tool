@@ -193,28 +193,57 @@ export const detectLanguages = (list: VoyagerTranslation[]): { sourceLang: strin
 };
 
 /**
- * Checks if the SQL dump contains model table data that could serve as a source language.
- * Returns the likely model content language code if detectable, or null.
- * Heuristic: checks for Turkish-specific characters in a sample of model table values.
+ * Script/character patterns used to detect language from text samples.
+ * Each entry: [localeCode, regex, threshold ratio]
+ */
+const LANG_DETECTORS: Array<[string, RegExp, number]> = [
+  ['tr', /[ğüşıöçĞÜŞİÖÇ]/, 0.15],
+  ['ar', /[\u0600-\u06FF]/, 0.15],        // Arabic / Persian
+  ['ru', /[а-яёА-ЯЁ]/, 0.25],             // Cyrillic (Russian)
+  ['uk', /[іїєґІЇЄҐ]/, 0.15],             // Ukrainian-specific Cyrillic
+  ['zh', /[\u4E00-\u9FFF]/, 0.15],         // Chinese
+  ['ja', /[\u3040-\u30FF]/, 0.15],         // Japanese (Hiragana/Katakana)
+  ['ko', /[\uAC00-\uD7AF]/, 0.15],         // Korean
+  ['de', /[äöüÄÖÜß]/, 0.1],               // German umlauts
+  ['fr', /[àâæçéèêëîïôœùûüÿÀÂÆÇÉÈÊËÎÏÔŒÙÛÜŸ]/, 0.1], // French accents
+];
+
+/**
+ * Detects the most likely language of content in model tables by sampling text values.
+ * Returns a locale code if confident enough, or null if undetectable.
  */
 export const detectModelLanguage = (modelData: Map<string, string>): string | null => {
   if (modelData.size === 0) return null;
 
-  const turkishPattern = /[ğüşıöçĞÜŞİÖÇ]/;
+  const scores: Record<string, number> = {};
   let sampleCount = 0;
-  let turkishHits = 0;
 
   for (const [, value] of modelData) {
-    if (sampleCount >= 100) break;
-    if (value && value.length > 5) {
-      sampleCount++;
-      if (turkishPattern.test(value)) turkishHits++;
+    if (sampleCount >= 200) break;
+    if (!value || value.length < 5) continue;
+    sampleCount++;
+    for (const [code, pattern] of LANG_DETECTORS) {
+      if (pattern.test(value)) {
+        scores[code] = (scores[code] ?? 0) + 1;
+      }
     }
   }
 
   if (sampleCount === 0) return null;
-  if (turkishHits / sampleCount > 0.2) return 'tr';
-  return null;
+
+  // Find the language with the highest ratio above its threshold
+  let bestLang: string | null = null;
+  let bestRatio = 0;
+
+  for (const [code, , threshold] of LANG_DETECTORS) {
+    const ratio = (scores[code] ?? 0) / sampleCount;
+    if (ratio >= threshold && ratio > bestRatio) {
+      bestRatio = ratio;
+      bestLang = code;
+    }
+  }
+
+  return bestLang;
 };
 
 /**
