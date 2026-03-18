@@ -122,8 +122,8 @@ export const detectLanguages = (list: VoyagerTranslation[]): { sourceLang: strin
   const sorted = Object.entries(counts).sort((a, b) => b[1] - a[1]);
   const allLangs = sorted.map(e => e[0]);
 
-  // 'en' is always preferred as source if present, otherwise take the most frequent
-  const sourceLang = allLangs.includes('en') ? 'en' : allLangs[0] ?? 'en';
+  // Most frequent locale = source language
+  const sourceLang = allLangs[0] ?? 'en';
 
   return { sourceLang, allLangs };
 };
