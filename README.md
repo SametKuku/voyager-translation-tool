@@ -2,6 +2,11 @@
 
 AI-powered translation tool for Laravel Voyager. Upload your SQL dump, auto-translate content using Google Translate or Gemini AI, and export ready-to-use SQL files.
 
+> **Looking for the Laravel package version?**
+> This is the standalone React/TypeScript app (no server required).
+> For a full Laravel package with Web UI + Artisan command + `lang/` file support, check out:
+> **[laratoolkit/laravel-translator](https://github.com/SametKuku/laravel-translator)** — `composer require laratoolkit/laravel-translator`
+
 ## Features
 
 - **Auto language detection** — Detects source language from both the `translations` table and model tables (e.g. Turkish content stored directly in `products`, `posts` etc.)
