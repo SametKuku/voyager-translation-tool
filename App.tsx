@@ -12,7 +12,7 @@ import {
   generateSQL
 } from './services/sqlUtils';
 import { translateBatch } from './services/lingvaService';
-
+import { isGeminiAvailable } from './services/geminiService';
 import { translateComplexHtml } from './services/htmlTranslator';
 import { slugify } from './services/textUtils';
 import { preProcessEnglishSource } from './services/terminologyService';
@@ -65,7 +65,7 @@ export default function App() {
   const startTranslation = async () => {
     if (groups.length === 0) return;
     setStatus(ProcessStatus.TRANSLATING);
-    addLog("Starting batch translation with Google GTX Service...");
+    addLog(`Starting batch translation with ${isGeminiAvailable() ? 'Gemini AI' : 'Google Translate (GTX)'}...`);
     addLog("NOTE: This will overwrite ALL existing Spanish/Russian translations with new versions from English.");
 
     const updatedGroups = [...groups];
@@ -183,6 +183,20 @@ export default function App() {
           Automate your Laravel Voyager multi-language content. Convert English sources to Spanish and Russian
           while maintaining HTML safety and technical placeholders.
         </p>
+        <div className="mt-3 inline-flex items-center gap-2">
+          {isGeminiAvailable() ? (
+            <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-blue-100 text-blue-700 border border-blue-200">
+              <span className="w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse inline-block"></span>
+              Gemini AI
+            </span>
+          ) : (
+            <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-slate-100 text-slate-600 border border-slate-200">
+              <span className="w-1.5 h-1.5 rounded-full bg-slate-400 inline-block"></span>
+              Google Translate (GTX)
+            </span>
+          )}
+          <span className="text-xs text-slate-400">Translation Engine</span>
+        </div>
       </header>
 
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-8">

@@ -29,6 +29,7 @@ const restoreHtml = (maskedText: string, tags: string[]): string => {
 };
 
 import { applySectoralTerminology, preProcessEnglishSource } from './terminologyService';
+import { isGeminiAvailable, translateBatchWithGemini } from './geminiService';
 
 export const translateWithGoogleGTX = async (
     text: string,
@@ -83,6 +84,8 @@ export const translateBatch = async (
     texts: string[],
     targetLocale: 'es' | 'ru'
 ): Promise<string[]> => {
-    // Run all requests in the batch in parallel for speed
+    if (isGeminiAvailable()) {
+        return translateBatchWithGemini(texts, targetLocale);
+    }
     return Promise.all(texts.map(text => translateWithGoogleGTX(text, targetLocale)));
 };
