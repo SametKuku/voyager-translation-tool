@@ -1,3 +1,6 @@
+# SQL dump files
+*.sql
+
 # Logs
 logs
 *.log
