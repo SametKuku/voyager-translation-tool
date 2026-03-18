@@ -191,9 +191,14 @@ export default function App() {
             }
 
             batch.forEach((group, idx) => {
-              let val = translations[idx];
-              if (group.source.column_name === 'slug') val = slugify(val);
-              group.translations[locale] = { ...group.source, locale, value: val };
+              let val = translations[idx] || group.source.value;
+              if (group.source.column_name === 'slug') {
+                // Pass source slug as fallback so slug is never empty
+                val = slugify(val, group.source.value);
+              }
+              if (val) {
+                group.translations[locale] = { ...group.source, locale, value: val };
+              }
             });
 
             setGroups([...updatedGroups]);
